@@ -39,14 +39,17 @@ function rankBar(pct, flag) {
 /** Render a single stat row with optional rank bar */
 function statRow(label, value, note, flag, rankPct) {
   const valClass = flag === 'good' ? 'good' : flag === 'bad' ? 'bad' : '';
+  // Ensure we don't display 'undefined' or 'null'
+  const safeValue = (value === undefined || value === null || value === 'undefined') ? '—' : value;
+  
   return `
     <div class="stat-row">
       <div class="stat-left">
-        <span class="stat-label">${label}</span>
+        <span class="stat-label">${label || 'Stat'}</span>
         ${rankPct != null ? rankBar(rankPct, flag) : ''}
       </div>
       <div class="stat-right">
-        <span class="stat-val ${valClass}">${value}</span>
+        <span class="stat-val ${valClass}">${safeValue}</span>
         ${note ? `<div class="stat-note">${note}</div>` : ''}
       </div>
     </div>`;
@@ -109,7 +112,7 @@ function renderPitchingSplitCard(rotationData, bullpenData, splits) {
           <div class="split-stat-row"><span>WHIP</span><span>${spWhip}</span></div>
           <div class="split-stat-row"><span>K/9</span><span>${spK9}</span></div>
           ${rotationData?.stats ? rotationData.stats.slice(0,2).map(s =>
-            `<div class="split-stat-row"><span>${s.label}</span><span class="${s.flag==='good'?'good':s.flag==='bad'?'bad':''}">${s.value}</span></div>`
+            `<div class="split-stat-row"><span>${s.label}</span><span class="${s.flag==='good'?'good':s.flag==='bad'?'bad':''}">${s.value || '—'}</span></div>`
           ).join('') : ''}
         </div>
         <div class="split-box">
@@ -118,7 +121,7 @@ function renderPitchingSplitCard(rotationData, bullpenData, splits) {
           <div class="split-stat-row"><span>WHIP</span><span>${bpWhip}</span></div>
           <div class="split-stat-row"><span>Saves</span><span>${bpSv}</span></div>
           ${bullpenData?.stats ? bullpenData.stats.slice(0,2).map(s =>
-            `<div class="split-stat-row"><span>${s.label}</span><span class="${s.flag==='good'?'good':s.flag==='bad'?'bad':''}">${s.value}</span></div>`
+            `<div class="split-stat-row"><span>${s.label}</span><span class="${s.flag==='good'?'good':s.flag==='bad'?'bad':''}">${s.value || '—'}</span></div>`
           ).join('') : ''}
         </div>
       </div>

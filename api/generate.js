@@ -10,7 +10,7 @@ export default async function handler(req, res) {
     return res.status(500).json({ error: 'GEMINI_API_KEY is not configured on the server.' });
   }
 
-  const prompt = `You are a senior MLB analyst generating a GM report card. Given these 2025 season stats for the ${teamName}, return ONLY a valid JSON object — no markdown fences, no prose outside the JSON.
+  const prompt = `You are a senior MLB analyst generating a GM report card. Given these 2026 season stats for the ${teamName}, return ONLY a valid JSON object — no markdown fences, no prose outside the JSON.
 
 STATS DATA:
 ${JSON.stringify(payload, null, 2)}
@@ -19,7 +19,15 @@ Return this exact JSON shape:
 {
   "overallGrade": "B+",
   "overallSummary": "...",
-  "offense": { "grade": "...", "headline": "...", "stats": [], "strength": "...", "weakness": "..." },
+  "offense": { 
+    "grade": "...", 
+    "headline": "...", 
+    "stats": [
+      { "label": "OPS", "value": "0.750", "note": "#10/30", "flag": "good" }
+    ], 
+    "strength": "...", 
+    "weakness": "..." 
+  },
   "rotation": { "grade": "...", "headline": "...", "stats": [], "strength": "...", "weakness": "..." },
   "bullpen": { "grade": "...", "headline": "...", "stats": [], "strength": "...", "weakness": "..." },
   "roster": { "grade": "...", "headline": "...", "stats": [], "strength": "...", "weakness": "..." },
@@ -27,10 +35,12 @@ Return this exact JSON shape:
 }
 
 Rules:
-- flag must be exactly "good", "neutral", or "bad"
-- Use real numbers from the supplied data
-- Rank notes should say e.g. "#4/30"
-- Be analytical and specific`;
+- If a stat is missing or null in the data, use "—" for the value. NEVER use "undefined" or "null" as a string.
+- flag must be exactly "good", "neutral", or "bad".
+- Use real numbers from the supplied data.
+- Rank notes should say e.g. "#4/30".
+- Be analytical and specific.
+- The "stats" array in each section should contain 3-5 key metrics.`;
 
   try {
     const url = `https://generativelanguage.googleapis.com/v1beta/models/gemini-3.1-flash-lite-preview:generateContent?key=${apiKey}`;
