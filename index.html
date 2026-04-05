@@ -1,0 +1,50 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Quintin's MLB GM Report Card</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link href="https://fonts.googleapis.com/css2?family=Barlow+Condensed:wght@400;600;700;800&family=Barlow:wght@400;500;600&display=swap" rel="stylesheet" />
+  <link rel="stylesheet" href="styles.css" />
+</head>
+<body>
+  <div class="app">
+
+    <div class="masthead">
+      <div class="diamond" id="mastheadDiamond"></div>
+      <div>
+        <div class="masthead-title">Quintin's MLB GM Report Card</div>
+      </div>
+    </div>
+
+    <div class="search-bar">
+      <input type="text" id="teamInput" placeholder="ENTER TEAM (e.g. Yankees, Dodgers...)" list="teamList" autocomplete="off" />
+      <datalist id="teamList"></datalist>
+      <button id="genBtn" onclick="runReport()">Generate ↗</button>
+    </div>
+
+    <div id="out"></div>
+
+    <!-- Q&A Panel (shown after report generates) -->
+    <div id="qaPanel" style="display:none">
+      <div class="qa-divider">
+        <span class="qa-divider-label">GM Desk — Ask a Question</span>
+      </div>
+      <div id="qaThread"></div>
+      <div class="qa-input-row">
+        <input type="text" id="qaInput" placeholder="e.g. Who should we trade for? How do we compare to the Astros?" />
+        <button id="qaBtn" onclick="askQuestion()">Ask ↗</button>
+      </div>
+    </div>
+
+    <div class="watermark">MLB Stats API · 2026 Season</div>
+  </div>
+
+  <script src="mlb.js"></script>
+  <script src="gemini.js"></script>
+  <script src="render.js"></script>
+  <script src="app.js"></script>
+</body>
+</html>
