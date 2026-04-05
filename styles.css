@@ -349,8 +349,8 @@ body {
 /* ---- Raw Data Bar ---- */
 .raw {
   background: var(--color-bg-secondary);
-  border-radius: var(--radius-md); padding: 12px 16px;
-  font-size: 12px; color: var(--color-text-muted); line-height: 1.8; font-style: italic;
+  border-radius: var(--radius-md); padding: 16px 20px;
+  font-size: 15px; color: var(--color-text-muted); line-height: 1.8; font-style: italic;
   margin-bottom: 1.5rem;
 }
 .raw strong { font-style: normal; font-weight: 600; color: var(--color-text); }
