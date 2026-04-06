@@ -35,6 +35,8 @@ Return this exact JSON shape:
 }
 
 Rules:
+- DATA INTEGRITY: Only use the provided stats. Do not use external knowledge of player history.
+- INJURIES: Only mention injuries if players are listed in the 'ilPlayers' array. If 'ilPlayers' is empty, assume the team is healthy. DO NOT invent injuries for stars like Aaron Judge unless they are in the data.
 - If a stat is missing or null in the data, use "—" for the value. NEVER use "undefined" or "null" as a string.
 - flag must be exactly "good", "neutral", or "bad".
 - Use real numbers from the supplied data.
