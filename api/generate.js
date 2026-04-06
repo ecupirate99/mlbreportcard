@@ -35,9 +35,11 @@ Return this exact JSON shape:
 }
 
 Rules:
-- DATA INTEGRITY: Only use the provided stats. Do not use external knowledge of player history.
-- INJURIES: Only mention injuries if players are listed in the 'ilPlayers' array. If 'ilPlayers' is empty, assume the team is healthy. DO NOT invent injuries for stars like Aaron Judge unless they are in the data.
-- If a stat is missing or null in the data, use "—" for the value. NEVER use "undefined" or "null" as a string.
+- DATA INTEGRITY: Only use the provided stats. Do not use external knowledge of player history, team reputations, or past seasons (2024, 2025, etc.).
+- NO HISTORICAL NARRATIVES: Do not mention "bouncing back from last year," "defending champions," or "rebuilding phase" unless the 2026 data explicitly supports it.
+- NO PLAYER REPUTATIONS: Do not assume a player is a "superstar" or "struggling veteran" based on real-world knowledge. Judge them ONLY by the 2026 stats in the payload.
+- INJURIES: Only mention injuries if players are listed in the 'ilPlayers' array. If 'ilPlayers' is empty, assume the team is healthy.
+- MISSING DATA: If a stat is missing or null in the data, use "—" for the value. NEVER use "undefined" or "null" as a string.
 - flag must be exactly "good", "neutral", or "bad".
 - Use real numbers from the supplied data.
 - Rank notes should say e.g. "#4/30".
