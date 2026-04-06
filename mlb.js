@@ -133,15 +133,9 @@ async function fetchPitchingSplits(teamId) {
  * stale or empty data, which caused the AI to hallucinate IL player names.
  *
  * FIX: We fetch the 40-man roster (which includes every player and their
- * current status) and filter by status codes that indicate IL placement:
- *   - '10D'  = 10-Day IL
- *   - '15D'  = 15-Day IL (legacy/minors)
- *   - '60D'  = 60-Day IL
- *   - 'DES'  = Designated for assignment (not IL but worth tracking)
- * The active 26-man is separately fetched for the active count.
+ * current status) and filter by status codes that indicate IL placement.
  */
 async function fetchRosters(teamId) {
-  // IL status codes used by the MLB API on the 40-man roster endpoint
   const IL_STATUS_CODES = new Set(['10D', '15D', '60D', 'IL10', 'IL60', 'IL7', 'DTD']);
 
   const [activeD, fortyManD] = await Promise.allSettled([
@@ -151,13 +145,11 @@ async function fetchRosters(teamId) {
 
   const active = activeD.status === 'fulfilled' ? (activeD.value.roster || []) : [];
 
-  // Derive IL from 40-man by checking status codes
   let il = [];
   if (fortyManD.status === 'fulfilled') {
     const fullRoster = fortyManD.value.roster || [];
     il = fullRoster.filter(p => {
       const code = p.status?.code || '';
-      // Check both the status code and description for IL indicators
       const desc = (p.status?.description || '').toLowerCase();
       return IL_STATUS_CODES.has(code) ||
              desc.includes('injured list') ||
@@ -166,8 +158,7 @@ async function fetchRosters(teamId) {
     });
   }
 
-  // If 40-man fetch failed, fall back to the dedicated injuries endpoint
-  // but flag it as potentially stale
+  // Fallback if 40-man fetch failed
   if (il.length === 0 && fortyManD.status !== 'fulfilled') {
     try {
       const fallback = await mlbFetch(`/api/v1/teams/${teamId}/roster?rosterType=injuries&season=2026`);
@@ -178,6 +169,65 @@ async function fetchRosters(teamId) {
   }
 
   return { active, il };
+}
+
+/**
+ * Calculate the real average age of the active roster from player birthdate data.
+ * Returns a number rounded to 1 decimal (e.g. 27.4), or null if unavailable.
+ *
+ * WHY: The old prompt template hardcoded "28" as an example value and Gemini
+ * would echo it rather than say N/A. Age must be computed from live data.
+ */
+async function fetchRosterAvgAge(teamId) {
+  try {
+    const d = await mlbFetch(
+      `/api/v1/teams/${teamId}/roster?rosterType=active&season=2026&hydrate=person`
+    );
+    const players = d.roster || [];
+    const today = new Date();
+
+    const ages = players
+      .map(p => {
+        const dob = p.person?.birthDate;
+        if (!dob) return null;
+        const birth = new Date(dob);
+        return (today - birth) / (365.25 * 24 * 60 * 60 * 1000);
+      })
+      .filter(a => a !== null && a > 15 && a < 60);
+
+    if (!ages.length) return null;
+    const avg = ages.reduce((s, a) => s + a, 0) / ages.length;
+    return Math.round(avg * 10) / 10;
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * Fetch how many games the team has played this season, used to compute
+ * accurate full-season pace projections for counting stats (HR, K, saves…).
+ * Returns { gamesPlayed, seasonGames, paceMultiplier } or null on failure.
+ *
+ * WHY: Gemini was inventing pace numbers because it had no idea what game
+ * of the season the team was on. We pre-compute pace in app.js and pass
+ * the final numbers in so the AI never has to do this math itself.
+ */
+async function fetchSeasonProgress(teamId) {
+  try {
+    const d = await mlbFetch(
+      `/api/v1/teams/${teamId}/stats?stats=season&group=hitting&season=2026`
+    );
+    const gamesPlayed = parseInt(d.stats?.[0]?.splits?.[0]?.stat?.gamesPlayed || 0);
+    const seasonGames = 162;
+    if (!gamesPlayed || gamesPlayed < 1) return null;
+    return {
+      gamesPlayed,
+      seasonGames,
+      paceMultiplier: seasonGames / gamesPlayed
+    };
+  } catch {
+    return null;
+  }
 }
 
 /** Fetch top individual hitters on the team (by OPS) */
@@ -203,10 +253,7 @@ async function fetchTopPitchers(teamId) {
     );
     const players = (d.stats?.[0]?.splits || [])
       .map(s => ({ name: s.player?.fullName || '—', stat: s.stat }))
-      .filter(p => {
-        const ip = parseFloat(p.stat?.inningsPitched || 0);
-        return ip >= 3;
-      });
+      .filter(p => parseFloat(p.stat?.inningsPitched || 0) >= 3);
 
     players.sort((a, b) => parseFloat(a.stat?.era || 99) - parseFloat(b.stat?.era || 99));
     return players.slice(0, 5);

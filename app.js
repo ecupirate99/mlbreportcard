@@ -26,9 +26,14 @@ document.getElementById('qaInput').addEventListener('keydown', e => {
 });
 
 // ---- State ----
-// Stored after a report generates; used to give Gemini 3.1 Flash-Lite Preview context for Q&A
 let currentReportContext = null;
 let currentTeamName = null;
+
+// ---- Utility: round to N decimal places ----
+function round(v, d = 1) {
+  if (v == null || isNaN(v)) return null;
+  return Math.round(v * Math.pow(10, d)) / Math.pow(10, d);
+}
 
 // ---- Main Report Runner ----
 async function runReport() {
@@ -51,7 +56,7 @@ async function runReport() {
     const colors = getTeamColors(team.id);
     applyTeamColors(colors);
 
-    // 2. Fetch data concurrently
+    // 2. Fetch all data concurrently — including new avg age and season progress
     setStatus('Fetching stats, roster & league rankings...');
     const [
       teamStats,
@@ -59,20 +64,24 @@ async function runReport() {
       splits,
       rosters,
       hitters,
-      pitchers
+      pitchers,
+      avgAge,
+      seasonProgress
     ] = await Promise.all([
       fetchTeamStats(team.id),
       fetchAllTeamStats(),
       fetchPitchingSplits(team.id),
       fetchRosters(team.id),
       fetchTopHitters(team.id),
-      fetchTopPitchers(team.id)
+      fetchTopPitchers(team.id),
+      fetchRosterAvgAge(team.id),      // FIX #1: real avg age from birthdates
+      fetchSeasonProgress(team.id)     // FIX #2: real game number for pace math
     ]);
 
     const hs = teamStats.hitting;
     const ps = teamStats.pitching;
 
-    // 3. Build league rank context for prompt
+    // 3. Build league rank context
     const lh = allLeagueStats.hitting;
     const lp = allLeagueStats.pitching;
 
@@ -89,32 +98,90 @@ async function runReport() {
       k9:   leagueRank(lp, team.id, 'strikeOuts', true),
     };
 
-    // 4. Assemble payload for Gemini 3.1 Flash-Lite Preview
+    // -------------------------------------------------------------------------
+    // FIX #3: Pre-compute strikeout rate (K%) so Gemini never calculates it.
+    // K% = strikeouts / plate appearances. Both come from the API directly.
+    // -------------------------------------------------------------------------
+    const rawK  = parseFloat(sv(hs, 'strikeOuts') || 0);
+    const rawPA = parseFloat(sv(hs, 'plateAppearances') || 0);
+    const kPct  = (rawPA > 0) ? round((rawK / rawPA) * 100, 1) : null;
+    // e.g. 23.4 (as a number; we'll format it as "23.4%" in the payload label)
+
+    // -------------------------------------------------------------------------
+    // FIX #4: Pre-compute save conversion % so Gemini never calculates it.
+    // saveConvPct = saves / (saves + blownSaves), expressed as a percentage.
+    // -------------------------------------------------------------------------
+    const rawSaves      = parseFloat(sv(ps, 'saves')      || 0);
+    const rawBlownSaves = parseFloat(sv(ps, 'blownSaves') || 0);
+    const saveOpps      = rawSaves + rawBlownSaves;
+    const saveConvPct   = (saveOpps > 0) ? round((rawSaves / saveOpps) * 100, 1) : null;
+    // e.g. 88.2 (as a number; formatted as "88.2%" in the payload)
+
+    // -------------------------------------------------------------------------
+    // FIX #2 continued: Pre-compute full-season pace for key counting stats.
+    // We pass the pre-computed pace values directly — Gemini never does math.
+    // -------------------------------------------------------------------------
+    const pace = seasonProgress
+      ? {
+          gamesPlayed: seasonProgress.gamesPlayed,
+          seasonGames: seasonProgress.seasonGames,
+          hrPace:   seasonProgress.gamesPlayed > 0
+            ? Math.round(parseFloat(sv(hs,'homeRuns') || 0) * seasonProgress.paceMultiplier)
+            : null,
+          kPace:    seasonProgress.gamesPlayed > 0
+            ? Math.round(parseFloat(sv(hs,'strikeOuts') || 0) * seasonProgress.paceMultiplier)
+            : null,
+          savesPace: seasonProgress.gamesPlayed > 0
+            ? Math.round(rawSaves * seasonProgress.paceMultiplier)
+            : null,
+          runsPace: seasonProgress.gamesPlayed > 0
+            ? Math.round(parseFloat(sv(hs,'runs') || 0) * seasonProgress.paceMultiplier)
+            : null,
+        }
+      : null;
+
+    // 4. Assemble payload for Gemini
     const payload = {
       team: team.name,
       season: 2026,
       leagueRanks: {
-        ops:   rankNote(ranks.ops),
-        obp:   rankNote(ranks.obp),
-        avg:   rankNote(ranks.avg),
-        hr:    rankNote(ranks.hr),
-        runs:  rankNote(ranks.runs),
-        era:   rankNote(ranks.era),
-        whip:  rankNote(ranks.whip),
+        ops:    rankNote(ranks.ops),
+        obp:    rankNote(ranks.obp),
+        avg:    rankNote(ranks.avg),
+        hr:     rankNote(ranks.hr),
+        runs:   rankNote(ranks.runs),
+        era:    rankNote(ranks.era),
+        whip:   rankNote(ranks.whip),
         totalK: rankNote(ranks.k9),
       },
       hitting: {
-        avg:  sv(hs,'avg'), obp: sv(hs,'obp'), slg: sv(hs,'slg'),
-        ops:  sv(hs,'ops'), hr:  sv(hs,'homeRuns'), runs: sv(hs,'runs'),
-        rbi:  sv(hs,'rbi'), sb:  sv(hs,'stolenBases'),
-        k:    sv(hs,'strikeOuts'), bb: sv(hs,'baseOnBalls')
+        avg:  sv(hs,'avg'),
+        obp:  sv(hs,'obp'),
+        slg:  sv(hs,'slg'),
+        ops:  sv(hs,'ops'),
+        hr:   sv(hs,'homeRuns'),
+        runs: sv(hs,'runs'),
+        rbi:  sv(hs,'rbi'),
+        sb:   sv(hs,'stolenBases'),
+        k:    sv(hs,'strikeOuts'),
+        bb:   sv(hs,'baseOnBalls'),
+        pa:   sv(hs,'plateAppearances'),
+        // FIX #3: pre-computed K% — do not ask Gemini to derive this
+        kPct: kPct !== null ? `${kPct}%` : null,
       },
       pitching: {
-        era:   sv(ps,'era'),   whip:  sv(ps,'whip'),
-        k:     sv(ps,'strikeOuts'), bb: sv(ps,'baseOnBalls'),
-        hr:    sv(ps,'homeRuns'), saves: sv(ps,'saves'),
-        blownSaves: sv(ps,'blownSaves'), wins: sv(ps,'wins'),
-        losses: sv(ps,'losses'), ip: sv(ps,'inningsPitched')
+        era:        sv(ps,'era'),
+        whip:       sv(ps,'whip'),
+        k:          sv(ps,'strikeOuts'),
+        bb:         sv(ps,'baseOnBalls'),
+        hr:         sv(ps,'homeRuns'),
+        saves:      sv(ps,'saves'),
+        blownSaves: sv(ps,'blownSaves'),
+        wins:       sv(ps,'wins'),
+        losses:     sv(ps,'losses'),
+        ip:         sv(ps,'inningsPitched'),
+        // FIX #4: pre-computed save conversion % — do not ask Gemini to derive this
+        saveConvPct: saveConvPct !== null ? `${saveConvPct}%` : null,
       },
       rotation: splits.starters ? {
         era:  sv(splits.starters,'era'),
@@ -123,26 +190,35 @@ async function runReport() {
         ip:   sv(splits.starters,'inningsPitched')
       } : null,
       bullpen: splits.bullpen ? {
-        era:   sv(splits.bullpen,'era'),
-        whip:  sv(splits.bullpen,'whip'),
-        saves: sv(splits.bullpen,'saves'),
+        era:        sv(splits.bullpen,'era'),
+        whip:       sv(splits.bullpen,'whip'),
+        saves:      sv(splits.bullpen,'saves'),
         blownSaves: sv(splits.bullpen,'blownSaves')
       } : null,
       roster: {
         active: rosters.active.length,
         il: rosters.il.length,
-        ilPlayers: rosters.il.slice(0,6).map(p => p.person?.fullName).filter(Boolean)
+        ilPlayers: rosters.il.slice(0,6).map(p => p.person?.fullName).filter(Boolean),
+        // FIX #1: real avg age from birthdate data — do not ask Gemini to guess this
+        avgAge: avgAge,
       },
+      // FIX #2: pre-computed pace numbers — do not ask Gemini to project these
+      pace,
       topHitters: hitters.slice(0,5).map(p => ({
         name: p.name,
-        avg:  sv(p.stat,'avg'), obp: sv(p.stat,'obp'),
-        slg:  sv(p.stat,'slg'), ops: sv(p.stat,'ops'),
-        hr:   sv(p.stat,'homeRuns'), rbi: sv(p.stat,'rbi')
+        avg:  sv(p.stat,'avg'),
+        obp:  sv(p.stat,'obp'),
+        slg:  sv(p.stat,'slg'),
+        ops:  sv(p.stat,'ops'),
+        hr:   sv(p.stat,'homeRuns'),
+        rbi:  sv(p.stat,'rbi')
       })),
       topPitchers: pitchers.slice(0,5).map(p => ({
         name: p.name,
-        era:  sv(p.stat,'era'), whip: sv(p.stat,'whip'),
-        k:    sv(p.stat,'strikeOuts'), ip: sv(p.stat,'inningsPitched'),
+        era:  sv(p.stat,'era'),
+        whip: sv(p.stat,'whip'),
+        k:    sv(p.stat,'strikeOuts'),
+        ip:   sv(p.stat,'inningsPitched'),
         wins: sv(p.stat,'wins')
       }))
     };
