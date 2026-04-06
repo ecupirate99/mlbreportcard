@@ -3,9 +3,9 @@
    ============================================= */
 
 const MLB_BASE = 'https://statsapi.mlb.com';
-const CURRENT_SEASON = '2026'; // Centralized season setting
 
 // Known team primary/secondary colors (hex).
+// Falls back to #1a1a1a if team not listed.
 const TEAM_COLORS = {
   108: { primary: '#BA0021', secondary: '#003263' }, // Angels
   109: { primary: '#A71930', secondary: '#000000' }, // Diamondbacks
@@ -27,7 +27,7 @@ const TEAM_COLORS = {
   136: { primary: '#005C5C', secondary: '#C4CED4' }, // Mariners
   137: { primary: '#FD5A1E', secondary: '#27251F' }, // Giants
   138: { primary: '#C41E3A', secondary: '#0C2340' }, // Cardinals
-  139: { primary: '#003831', secondary: '#EFB21E' }, // Rays (Fixed)
+  139: { primary: '#092C5C', secondary: '#8FBCE6' }, // Rays
   140: { primary: '#003278', secondary: '#C0111F' }, // Rangers
   141: { primary: '#134A8E', secondary: '#1D2D5C' }, // Blue Jays
   142: { primary: '#002B5C', secondary: '#D31145' }, // Twins
@@ -40,17 +40,14 @@ const TEAM_COLORS = {
 };
 
 async function mlbFetch(path) {
-  // Add cache-busting to ensure we get the latest data from the API
-  const separator = path.includes('?') ? '&' : '?';
-  const url = `${MLB_BASE}${path}${separator}v=${Date.now()}`;
-  const r = await fetch(url);
+  const r = await fetch(MLB_BASE + path);
   if (!r.ok) throw new Error(`MLB API ${r.status} — ${path}`);
   return r.json();
 }
 
 /** Find a team by name/abbreviation/city */
 async function findTeam(name) {
-  const d = await mlbFetch(`/api/v1/teams?sportId=1&season=${CURRENT_SEASON}`);
+  const d = await mlbFetch('/api/v1/teams?sportId=1&season=2026');
   const q = name.trim().toLowerCase();
   const team = d.teams.find(t =>
     t.name.toLowerCase().includes(q) ||
@@ -59,15 +56,15 @@ async function findTeam(name) {
     (t.franchiseName || '').toLowerCase().includes(q) ||
     (t.locationName  || '').toLowerCase().includes(q)
   );
-  if (!team) throw new Error(`"${name}" not found.`);
+  if (!team) throw new Error(`"${name}" not found. Try a nickname like "Yankees" or full name like "New York Yankees".`);
   return team;
 }
 
 /** Fetch all 30 teams' hitting + pitching stats for league ranking */
 async function fetchAllTeamStats() {
   const [hitAll, pitAll] = await Promise.all([
-    mlbFetch(`/api/v1/teams/stats?stats=season&group=hitting&season=${CURRENT_SEASON}&sportId=1`),
-    mlbFetch(`/api/v1/teams/stats?stats=season&group=pitching&season=${CURRENT_SEASON}&sportId=1`)
+    mlbFetch('/api/v1/teams/stats?stats=season&group=hitting&season=2026&sportId=1'),
+    mlbFetch('/api/v1/teams/stats?stats=season&group=pitching&season=2026&sportId=1')
   ]);
 
   const hitting  = {};
@@ -83,6 +80,11 @@ async function fetchAllTeamStats() {
   return { hitting, pitching };
 }
 
+/**
+ * Compute league rank (1 = best) for a given stat across all teams.
+ * higherIsBetter: true for OPS/AVG/HR etc., false for ERA/WHIP etc.
+ * Returns { rank, total, pct } where pct = percentile 0–100 (100 = best)
+ */
 function leagueRank(allStats, teamId, statKey, higherIsBetter = true) {
   const vals = Object.entries(allStats)
     .map(([id, stat]) => ({ id: parseInt(id), val: parseFloat(stat[statKey]) }))
@@ -97,10 +99,11 @@ function leagueRank(allStats, teamId, statKey, higherIsBetter = true) {
   return { rank, total, pct };
 }
 
+/** Fetch team-level hitting + pitching stats */
 async function fetchTeamStats(teamId) {
   const [hitD, pitD] = await Promise.allSettled([
-    mlbFetch(`/api/v1/teams/${teamId}/stats?stats=season&group=hitting&season=${CURRENT_SEASON}`),
-    mlbFetch(`/api/v1/teams/${teamId}/stats?stats=season&group=pitching&season=${CURRENT_SEASON}`)
+    mlbFetch(`/api/v1/teams/${teamId}/stats?stats=season&group=hitting&season=2026`),
+    mlbFetch(`/api/v1/teams/${teamId}/stats?stats=season&group=pitching&season=2026`)
   ]);
   return {
     hitting:  hitD.status  === 'fulfilled' ? (hitD.value.stats?.[0]?.splits?.[0]?.stat  || {}) : {},
@@ -108,10 +111,11 @@ async function fetchTeamStats(teamId) {
   };
 }
 
+/** Fetch starter vs bullpen pitching splits */
 async function fetchPitchingSplits(teamId) {
   const [startersD, bullpenD] = await Promise.allSettled([
-    mlbFetch(`/api/v1/teams/${teamId}/stats?stats=season&group=pitching&season=${CURRENT_SEASON}&playerPool=startingPitchers`),
-    mlbFetch(`/api/v1/teams/${teamId}/stats?stats=season&group=pitching&season=${CURRENT_SEASON}&playerPool=relievers`)
+    mlbFetch(`/api/v1/teams/${teamId}/stats?stats=season&group=pitching&season=2026&playerPool=startingPitchers`),
+    mlbFetch(`/api/v1/teams/${teamId}/stats?stats=season&group=pitching&season=2026&playerPool=relievers`)
   ]);
 
   const starters = startersD.status === 'fulfilled'
@@ -122,21 +126,65 @@ async function fetchPitchingSplits(teamId) {
   return { starters, bullpen };
 }
 
+/**
+ * Fetch active roster AND derive the real IL list from the 40-man roster.
+ *
+ * WHY: The `rosterType=injuries` endpoint is unreliable — it often returns
+ * stale or empty data, which caused the AI to hallucinate IL player names.
+ *
+ * FIX: We fetch the 40-man roster (which includes every player and their
+ * current status) and filter by status codes that indicate IL placement:
+ *   - '10D'  = 10-Day IL
+ *   - '15D'  = 15-Day IL (legacy/minors)
+ *   - '60D'  = 60-Day IL
+ *   - 'DES'  = Designated for assignment (not IL but worth tracking)
+ * The active 26-man is separately fetched for the active count.
+ */
 async function fetchRosters(teamId) {
-  const [activeD, ilD] = await Promise.allSettled([
-    mlbFetch(`/api/v1/teams/${teamId}/roster?rosterType=active&season=${CURRENT_SEASON}`),
-    mlbFetch(`/api/v1/teams/${teamId}/roster?rosterType=injuries&season=${CURRENT_SEASON}`)
+  // IL status codes used by the MLB API on the 40-man roster endpoint
+  const IL_STATUS_CODES = new Set(['10D', '15D', '60D', 'IL10', 'IL60', 'IL7', 'DTD']);
+
+  const [activeD, fortyManD] = await Promise.allSettled([
+    mlbFetch(`/api/v1/teams/${teamId}/roster?rosterType=active&season=2026`),
+    mlbFetch(`/api/v1/teams/${teamId}/roster?rosterType=fullRoster&season=2026`)
   ]);
-  return {
-    active: activeD.status === 'fulfilled' ? (activeD.value.roster || []) : [],
-    il:     ilD.status     === 'fulfilled' ? (ilD.value.roster     || []) : []
-  };
+
+  const active = activeD.status === 'fulfilled' ? (activeD.value.roster || []) : [];
+
+  // Derive IL from 40-man by checking status codes
+  let il = [];
+  if (fortyManD.status === 'fulfilled') {
+    const fullRoster = fortyManD.value.roster || [];
+    il = fullRoster.filter(p => {
+      const code = p.status?.code || '';
+      // Check both the status code and description for IL indicators
+      const desc = (p.status?.description || '').toLowerCase();
+      return IL_STATUS_CODES.has(code) ||
+             desc.includes('injured list') ||
+             desc.includes('10-day') ||
+             desc.includes('60-day');
+    });
+  }
+
+  // If 40-man fetch failed, fall back to the dedicated injuries endpoint
+  // but flag it as potentially stale
+  if (il.length === 0 && fortyManD.status !== 'fulfilled') {
+    try {
+      const fallback = await mlbFetch(`/api/v1/teams/${teamId}/roster?rosterType=injuries&season=2026`);
+      il = fallback.roster || [];
+    } catch {
+      il = [];
+    }
+  }
+
+  return { active, il };
 }
 
+/** Fetch top individual hitters on the team (by OPS) */
 async function fetchTopHitters(teamId) {
   try {
     const d = await mlbFetch(
-      `/api/v1/stats?stats=season&group=hitting&season=${CURRENT_SEASON}&teamId=${teamId}`
+      `/api/v1/stats?stats=season&group=hitting&season=2026&teamId=${teamId}`
     );
     const players = (d.stats?.[0]?.splits || [])
       .map(s => ({ name: s.player?.fullName || '—', stat: s.stat }))
@@ -147,10 +195,11 @@ async function fetchTopHitters(teamId) {
   } catch { return []; }
 }
 
+/** Fetch top individual pitchers on the team (by ERA, min 3 IP) */
 async function fetchTopPitchers(teamId) {
   try {
     const d = await mlbFetch(
-      `/api/v1/stats?stats=season&group=pitching&season=${CURRENT_SEASON}&teamId=${teamId}`
+      `/api/v1/stats?stats=season&group=pitching&season=2026&teamId=${teamId}`
     );
     const players = (d.stats?.[0]?.splits || [])
       .map(s => ({ name: s.player?.fullName || '—', stat: s.stat }))
@@ -164,15 +213,18 @@ async function fetchTopPitchers(teamId) {
   } catch { return []; }
 }
 
+/** Return team color object or default */
 function getTeamColors(teamId) {
   return TEAM_COLORS[teamId] || { primary: '#1a1a1a', secondary: '#444444' };
 }
 
+/** Safe stat value extractor */
 function sv(o, ...keys) {
   for (const k of keys) if (o && o[k] != null && o[k] !== '') return o[k];
   return null;
 }
 
+/** Format number */
 function fmtN(v, d = 3) {
   if (v == null || v === '') return '—';
   const n = parseFloat(v);
