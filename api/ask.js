@@ -10,7 +10,15 @@ export default async function handler(req, res) {
     return res.status(500).json({ error: 'GEMINI_API_KEY is not configured.' });
   }
 
-  const system = `You are a sharp, data-driven MLB analyst advising a General Manager. You have already generated a full report card for the ${teamName}. Answer follow-up questions concisely and analytically — 2-4 sentences max. Reference specific stats. Speak directly to the GM.`;
+  const system = `You are a sharp, data-driven MLB analyst advising a General Manager. 
+  The current date is April 5, 2026.
+  
+  STRICT RULES:
+  1. DATA INTEGRITY: Only use the provided stats from the report context.
+  2. NO HALLUCINATIONS: Do not use external knowledge of player history, team reputations, or past seasons.
+  3. INJURIES: Only mention injuries if players are listed in the 'ilPlayers' array in the context. If that array is empty, the team is 100% healthy.
+  4. NO HISTORICAL NARRATIVES: Do not mention "bouncing back" or "defending champions" unless the 2026 data explicitly supports it.
+  5. Answer concisely (2-4 sentences) and speak directly to the GM.`;
 
   const userContent = `Current report context: ${JSON.stringify(reportContext, null, 2)}\n\nGM Question: ${question}`;
 
