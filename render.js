@@ -236,6 +236,9 @@ function renderReport(team, report, hs, ps, splits, rosters, hitters, pitchers, 
       </div>`;
   }).join('');
 
+  // Get full list of IL names for debugging
+  const ilNames = rosters.il.map(p => p.person?.fullName).filter(Boolean).join(', ') || 'None';
+
   document.getElementById('out').innerHTML = `
     <div class="report">
       <div class="report-header">
@@ -277,6 +280,8 @@ function renderReport(team, report, hs, ps, splits, rosters, hitters, pitchers, 
         IL: ${rosters.il.length}
         ${ranks.ops ? ` · OPS rank: #${ranks.ops.rank}/30` : ''}
         ${ranks.era ? ` · ERA rank: #${ranks.era.rank}/30` : ''}
+        <br><br>
+        <strong>IL List (Source):</strong> ${ilNames}
       </div>
     </div>`;
 }
